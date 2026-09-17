@@ -1,0 +1,27 @@
+version: "3.7"
+services:
+  redis507:
+    image: "redis:5.0.7"
+    ports:
+      - "26379:6379"
+  mysql8019:
+    image: "mysql:8.0.19"
+    ports:
+      - "23306:3306"
+    # init.sql 既是本地开发的一次性脚本, 也是容器首次启动时的初始化脚本
+    command: "--default-authentication-plugin=mysql_native_password --init-file /data/application/init.sql"
+    environment:
+      MYSQL_ROOT_PASSWORD: "root1234"
+      # 数据库名必须和 conf/config.docker.yaml 里的 mysql.db 一致
+      MYSQL_DATABASE: "inkwell_pre"
+    volumes:
+      - ./init.sql:/data/application/init.sql
+  inkwell_app:
+    build: .
+    # 用 -conf 指定容器内的配置文件, 里面连的是 mysql8019/redis507 这两个服务名
+    command: sh -c "./wait-for.sh redis507:6379 mysql8019:3306 -- ./inkwell -conf ./conf/config.docker.yaml"
+    depends_on:
+      - mysql8019
+      - redis507
+    ports:
+      - "8081:8081"

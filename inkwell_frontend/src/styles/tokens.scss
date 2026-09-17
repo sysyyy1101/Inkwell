@@ -1,0 +1,190 @@
+/**
+ * 设计变量。整套 UI 只从这里取颜色/圆角/阴影/间距, 组件里不写死色值,
+ * 这样深色模式和后续换肤都只需要改这一个文件。
+ */
+:root {
+  color-scheme: light;
+
+  /* 正文/UI: 拉丁用 Inter, 中文用思源黑体, 最后才回落到系统字体 */
+  --font-sans: 'Inter Variable', 'Noto Sans SC Variable', -apple-system, BlinkMacSystemFont,
+    'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Noto Sans SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  /* 展示字体: 只给站点级大标题用, 拉丁 Source Serif 4 + 中文思源宋体 */
+  --font-display: 'Source Serif 4 Variable', 'Noto Serif SC Variable', Georgia, 'Songti SC', 'SimSun', serif;
+  /* 品牌字标: 只有顶栏的 Inkwell 用它, 刻意和其它任何字体都不一样(罗马碑刻体大写) */
+  --font-brand: 'Cinzel Variable', 'Source Serif 4 Variable', Georgia, serif;
+  /* 等宽: 用户/帖子 ID、接口路径这类信息 */
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* 字重档位: Inter 可变字体支持任意值, 全站只用这几档 */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 550;
+  --weight-bold: 600;
+  --weight-heavy: 650;
+  --weight-black: 700;
+
+  /* 字距: 只在大字标题上收紧, 中文正文保持 0 */
+  --tracking-tighter: -0.03em;
+  --tracking-tight: -0.018em;
+  --tracking-wide: 0.06em;
+
+  /* 行高 */
+  --leading-tight: 1.22;
+  --leading-snug: 1.42;
+  --leading-normal: 1.62;
+  --leading-relaxed: 1.78;
+
+  /* 圆角 */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+  --space-10: 72px;
+
+  /* 字号 */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-2xl: 30px;
+  --text-3xl: 40px;
+
+  /* 颜色 - 浅色 */
+  --bg: #eceff5;
+  /* 背景光晕: 顶部冷调高光 + 右上补光 + 斜向过渡(固定贴在视口上) */
+  --bg-wash: radial-gradient(1280px 740px at 50% -14%, rgba(11, 99, 206, 0.34), transparent 62%),
+    radial-gradient(940px 660px at 90% 0%, rgba(92, 122, 180, 0.24), transparent 66%),
+    linear-gradient(160deg, #ffffff 0%, #f1f4f9 44%, #e4e9f2 100%);
+  --bg-muted: #e6e9ef;
+  --surface: #ffffff;
+  --surface-2: #fafbfd;
+  --surface-glass: rgba(255, 255, 255, 0.78);
+  --surface-hover: rgba(17, 17, 20, 0.045);
+
+  /**
+   * 顶栏底色: 只是一层很淡的雾, 真正的分割感由 AppHeader 里那层
+   * "带蒙版的 backdrop-filter" 提供(没有边框线), 所以这里刻意压得很浅。
+   */
+  --header-bg: linear-gradient(180deg, rgba(252, 253, 255, 0.62), rgba(250, 251, 254, 0.24));
+  --header-bg-scrolled: linear-gradient(180deg, rgba(251, 253, 255, 0.78), rgba(248, 250, 254, 0.42));
+
+  /* 分段控件(热门/最新/时间榜)的底色与滑块 */
+  --segmented-bg: rgba(17, 17, 20, 0.05);
+  --segmented-thumb: #ffffff;
+  --segmented-thumb-border: rgba(17, 17, 20, 0.07);
+  --segmented-thumb-shadow: 0 1px 2px rgba(17, 17, 20, 0.07), 0 3px 10px rgba(17, 17, 20, 0.06);
+
+  --text: #16161a;
+  --text-secondary: #565860;
+  /* 三级文字也保持在 4.5:1 左右, 12px 的时间/统计才看得清 */
+  --text-tertiary: #6f7079;
+  --text-inverse: #ffffff;
+
+  --border: rgba(17, 17, 20, 0.09);
+  --border-strong: rgba(17, 17, 20, 0.18);
+  --divider: rgba(17, 17, 20, 0.07);
+
+  --accent: #0b63ce;
+  --accent-hover: #0a57b5;
+  --accent-active: #09489c;
+  --accent-soft: rgba(11, 99, 206, 0.09);
+  --accent-soft-hover: rgba(11, 99, 206, 0.16);
+  --accent-contrast: #ffffff;
+
+  --success: #1d9a52;
+  --success-soft: rgba(29, 154, 82, 0.12);
+  --danger: #e0342b;
+  --danger-soft: rgba(224, 52, 43, 0.12);
+  --warning: #b8720a;
+  --warning-soft: rgba(184, 114, 10, 0.14);
+
+  --vote-up: #0b63ce;
+  --vote-up-soft: rgba(11, 99, 206, 0.11);
+  --vote-down: #e0342b;
+  --vote-down-soft: rgba(224, 52, 43, 0.12);
+
+  /* 阴影: 分层很浅, 只用来表达层级 */
+  --shadow-xs: 0 1px 1px rgba(17, 17, 20, 0.03);
+  --shadow-sm: 0 1px 2px rgba(17, 17, 20, 0.05), 0 6px 16px rgba(17, 17, 20, 0.05);
+  --shadow-md: 0 4px 12px rgba(17, 17, 20, 0.07), 0 16px 40px rgba(17, 17, 20, 0.08);
+  --shadow-lg: 0 8px 24px rgba(17, 17, 20, 0.08), 0 32px 72px rgba(17, 17, 20, 0.12);
+  --ring: 0 0 0 3px rgba(11, 99, 206, 0.16);
+
+  --header-height: 64px;
+  --container: 1400px;
+  --transition: 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #08080b;
+  --bg-wash: radial-gradient(1150px 660px at 50% -10%, rgba(76, 157, 255, 0.26), transparent 62%),
+    radial-gradient(900px 640px at 12% 0%, rgba(64, 116, 178, 0.18), transparent 64%),
+    linear-gradient(180deg, #191921 0%, #0c0c11 45%, #08080b 100%);
+  --bg-muted: #1a1a1e;
+  --surface: #17171a;
+  --surface-2: #1e1e22;
+  --surface-glass: rgba(14, 14, 17, 0.72);
+  --surface-hover: rgba(255, 255, 255, 0.055);
+
+  /* 深色下也只有一层冷调薄雾, 不再是一块会和内容断层的纯黑 */
+  --header-bg: linear-gradient(180deg, rgba(30, 36, 50, 0.55), rgba(20, 24, 34, 0.22));
+  --header-bg-scrolled: linear-gradient(180deg, rgba(26, 31, 43, 0.72), rgba(18, 21, 29, 0.38));
+
+  --segmented-bg: rgba(255, 255, 255, 0.055);
+  --segmented-thumb: #26262d;
+  --segmented-thumb-border: rgba(255, 255, 255, 0.09);
+  --segmented-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
+
+  --text: #f2f2f5;
+  --text-secondary: #a3a3ab;
+  --text-tertiary: #86868f;
+  --text-inverse: #0a0a0c;
+
+  --border: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --divider: rgba(255, 255, 255, 0.09);
+
+  --accent: #4c9dff;
+  --accent-hover: #6cb0ff;
+  --accent-active: #3b8ef5;
+  --accent-soft: rgba(76, 157, 255, 0.15);
+  --accent-soft-hover: rgba(76, 157, 255, 0.24);
+  --accent-contrast: #ffffff;
+
+  --success: #30d158;
+  --success-soft: rgba(48, 209, 88, 0.16);
+  --danger: #ff453a;
+  --danger-soft: rgba(255, 69, 58, 0.16);
+  --warning: #ffd60a;
+  --warning-soft: rgba(255, 214, 10, 0.16);
+
+  --vote-up: #4c9dff;
+  --vote-up-soft: rgba(76, 157, 255, 0.18);
+  --vote-down: #ff453a;
+  --vote-down-soft: rgba(255, 69, 58, 0.18);
+
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4), 0 8px 20px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 20px 48px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.5), 0 36px 80px rgba(0, 0, 0, 0.45);
+  --ring: 0 0 0 3px rgba(76, 157, 255, 0.22);
+}
