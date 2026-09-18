@@ -26,7 +26,7 @@ inkwell/
 │   ├── settings/ logger/ conf/  # 配置与热更新、zap 日志、两个环境的 yaml
 │   ├── docs/                  # swag 生成的接口文档, 不要手改
 │   ├── init.sql               # 建库建表 + 一套完整演示数据(会清空四张表)
-│   └── Dockerfile / docker-compose.yml / wait-for.sh / .air.conf
+│   └── Dockerfile / docker-compose.yml / .dockerignore / wait-for.sh / .air.conf
 └── inkwell_frontend/         # Vue3 + Vite 前端(见第 9 节)
 ```
 
@@ -115,6 +115,9 @@ login_rate_limit:     # 登录接口的令牌桶限流(整个进程只有一个�
 
 `conf/config.docker.yaml` 只有三处差异: `mode`/`log.level` 换成 `release`/`info`; `mysql.host`/`redis.host` 换成 compose 的服务名;
 `jwt_secret` 给了一个占位值(**正式部署必须换成自己的随机密钥**)。
+
+`conf/config.local-docker.yaml` 是第三种组合: 只用 Docker 起 MySQL/Redis, 后端在本机 `go run` 时用,
+所以它的 host 是 `127.0.0.1`, 端口是 compose 映射到本机的 `23306`/`26379`(见第 7 节用法 B)。
 
 环境变量(优先级高于配置文件):
 
@@ -280,12 +283,71 @@ zap + lumberjack: JSON 编码、ISO8601 时间、级别大写、带短文件名�
 
 ## 7. Docker 部署
 
-在 `inkwell_backend` 目录下执行 `docker-compose up --build`, 会起三个服务: `mysql8019`(23306:3306, root 密码 `root1234`)、
-`redis507`(26379:6379)、`inkwell_app`(8081:8081, 用 `conf/config.docker.yaml` 启动)。
+`inkwell_backend` 目录下有 `Dockerfile` + `docker-compose.yml` + `wait-for.sh`, 一条命令就能起 MySQL 8、Redis 5 和后端三个服务。
+下面所有命令都在 `inkwell_backend` 目录下执行。
 
-应用启动命令是 `./wait-for.sh redis507:6379 mysql8019:3306 -- ./inkwell -conf ./conf/config.docker.yaml`, 先等依赖端口通了再起服务。
-容器里**不会**自动跑 `cmd/seed`, 首页榜单要自己灌一次; 镜像里也只有后端二进制, 前端 `dist/` 需要自己用 nginx 托管并把
-`/api/v1`、`/swagger` 反代到后端。
+| 服务 | 容器内端口 | 映射到本机 | 说明 |
+| --- | --- | --- | --- |
+| `mysql8019` | 3306 | **23306** | root 密码 `root1234`, 库 `inkwell_pre`; 第一次启动自动执行 `init.sql` |
+| `redis507` | 6379 | **26379** | 开了 AOF, 重启不丢投票记录 |
+| `inkwell_app` | 8081 | **8081** | 用 `conf/config.docker.yaml` 启动 |
+
+端口刻意避开了本机默认的 3306/6379, 所以"本机自己装的一套 MySQL/Redis"和"容器里的这一套"可以同时存在。
+
+### 7.1 用法 A: 三个服务全在 Docker 里
+
+```bash
+docker compose up --build -d     # 构建并启动(第一次要拉镜像, 需要网络)
+docker compose ps                # 三个服务都 healthy 才算真的就绪
+docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml   # 把 MySQL 里的帖子灌进 Redis
+```
+
+灌完榜单后: `curl http://127.0.0.1:8081/api/v1/ping` 应该返回 pong, 浏览器打开
+`http://127.0.0.1:8081/swagger/index.html` 就是接口文档。
+
+常用命令:
+
+```bash
+docker compose logs -f inkwell_app    # 看后端日志(容器里的日志在 /log/inkwell.log, 用 app_log 数据卷持久化)
+docker compose restart inkwell_app    # 只重启后端
+docker compose down                   # 停止并删除容器, 数据保留在数据卷里
+docker compose down -v                # 连数据卷一起删, 下次启动会重新执行 init.sql(推倒重来)
+```
+
+### 7.2 用法 B: 只用 Docker 起数据库, 后端在本机 go run(推荐日常开发用)
+
+```bash
+docker compose up -d mysql8019 redis507
+go run . -conf ./conf/config.local-docker.yaml
+```
+
+`config.local-docker.yaml` 指向本机的 23306/26379; 而 `config.docker.yaml` 里的 host 是 `mysql8019`/`redis507`,
+那是容器网络里的服务名, 在本机解析不了, 两份配置不能混用。
+
+### 7.3 几个刻意的设计(面试可以讲)
+
+- **多阶段构建**: `golang:1.25-alpine` 只负责编译, 二进制被拷进 `debian:bullseye-slim`, 运行镜像里没有 Go 工具链和源码。
+- **不写死 GOOS/GOARCH**: 交给 BuildKit 按目标平台构建; 写死成 linux/amd64 的话, 在 arm64 机器上会做出一个启动就报
+  `exec format error` 的镜像。
+- **`init.sql` 放 `/docker-entrypoint-initdb.d/` 而不是 `--init-file`**: `--init-file` 是 mysqld 的启动参数, **每次启动都会执行**,
+  而 `init.sql` 开头是四行 TRUNCATE —— 用它的话每次重启容器都会把数据清空重灌。放到 `docker-entrypoint-initdb.d` 下,
+  官方入口脚本只会在数据目录为空(第一次启动)时执行一次。
+- **`MYSQL_ROOT_HOST=%`**: 官方镜像默认只建 `root@localhost`(只能从容器内部连), 后端跑在另一个容器里,
+  不加这行会报 `Access denied for user 'root'@'172.x.x.x'`。
+- **必须保留 `--default-authentication-plugin=mysql_native_password`**: MySQL 8 默认的 `caching_sha2_password` 和项目里的
+  `go-sql-driver/mysql v1.4.0` 不兼容, 去掉它后端连不上数据库。
+- **healthcheck + `depends_on: service_healthy`**: 保证的是"依赖真的能用了", 而不只是"容器按顺序启动了"; 容器里再用
+  `wait-for.sh` 做端口级的二次确认, 它也可以脱离 compose 手动使用。
+- **数据卷 `mysql_data` / `redis_data` / `app_log`**: `docker compose down` 不会丢数据, 只有 `down -v` 才会清空。
+- **镜像里同时打包了 `./seed`**: 需要重建榜单时执行 `docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml`。
+
+### 7.4 已知限制
+
+- 第一次 `docker compose up --build` 要联网拉镜像(golang、debian、mysql、redis, 1GB 以上), 国内建议先给 Docker 配镜像加速器。
+- 前端不在 compose 里: 需要自己 `npm run build`, 再用 nginx 托管 `dist/` 并把 `/api/v1`、`/swagger` 反代到后端。
+- `conf/config.docker.yaml` 里的 `jwt_secret` 是占位值, 正式部署必须换成自己的随机密钥(或用环境变量 `INKWELL_JWT_SECRET` 覆盖)。
+- compose 里的 8081 会和你本机 `go run .` 抢端口, 两个不要同时启动。
+- 容器版 MySQL 的账号密码是写死在 compose 里的(只为本地演示), 生产应该用密钥管理 + 非 root 账号。
 
 ## 8. 测试
 

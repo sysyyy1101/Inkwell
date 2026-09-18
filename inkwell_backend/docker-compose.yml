@@ -1,27 +1,91 @@
-version: "3.7"
+# 一次起三个服务: MySQL 8 + Redis 5 + 后端。
+#
+# 所有命令都在 inkwell_backend 目录下执行(README 第 7 节有完整说明):
+#   docker compose up --build -d        构建并启动(第一次要拉镜像, 需要网络)
+#   docker compose ps                   看状态, 三个都 healthy 才算真的就绪
+#   docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml   把 MySQL 的帖子灌进 Redis
+#   docker compose logs -f inkwell_app  看后端日志
+#   docker compose down                 停止并删除容器(数据留在数据卷里)
+#   docker compose down -v              连数据卷一起删, 下次启动重新执行 init.sql(推倒重来)
+#
+# 只想要数据库、后端在本机 go run(日常开发更常用):
+#   docker compose up -d mysql8019 redis507
+#   go run . -conf ./conf/config.local-docker.yaml
 services:
-  redis507:
-    image: "redis:5.0.7"
-    ports:
-      - "26379:6379"
   mysql8019:
     image: "mysql:8.0.19"
-    ports:
-      - "23306:3306"
-    # init.sql 既是本地开发的一次性脚本, 也是容器首次启动时的初始化脚本
-    command: "--default-authentication-plugin=mysql_native_password --init-file /data/application/init.sql"
+    # 两处刻意的设置:
+    # 1) --default-authentication-plugin=mysql_native_password 必须保留: MySQL 8 默认用
+    #    caching_sha2_password, 而项目里的 go-sql-driver/mysql v1.4.0 不支持它,
+    #    去掉之后后端会连不上数据库。
+    # 2) init.sql 不再用 --init-file 挂载: --init-file 是 mysqld 的启动参数, 每次启动都会
+    #    执行, 而 init.sql 开头就是 TRUNCATE 四张表 —— 那样每次重启容器都会把数据清空。
+    #    放到 /docker-entrypoint-initdb.d/ 交给官方入口脚本处理, 只在数据目录为空(第一次启动)时执行一次。
+    command: "--default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci"
     environment:
       MYSQL_ROOT_PASSWORD: "root1234"
+      # 必须加: 官方镜像默认只创建 root@localhost(只能从容器内部连),
+      # 后端是另一个容器, 不加这行会报 "Access denied for user 'root'@'172.x.x.x'"
+      MYSQL_ROOT_HOST: "%"
       # 数据库名必须和 conf/config.docker.yaml 里的 mysql.db 一致
       MYSQL_DATABASE: "inkwell_pre"
+      TZ: "Asia/Shanghai"
+    ports:
+      # 本机 23306 -> 容器 3306, 避开本机自己装的 MySQL(3306)
+      - "23306:3306"
     volumes:
-      - ./init.sql:/data/application/init.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      # 数据卷: 不带这个的话, docker compose down 之后数据就没了
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # 走 socket 连(不写 -h), 匹配的是 root@localhost, 一定存在。
+      # 这里用 exec 形式 + 明文密码, 是为了避开 compose 的 $ 变量转义(写 $$ 容易被误解析);
+      # 密码要和上面的 MYSQL_ROOT_PASSWORD 保持一致。
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot1234", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  redis507:
+    image: "redis:5.0.7"
+    # 开 AOF: 投票记录(7 天 TTL)不会因为容器重启就丢
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # 本机 26379 -> 容器 6379, 避开本机自己装的 Redis(6379)
+      - "26379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   inkwell_app:
     build: .
-    # 用 -conf 指定容器内的配置文件, 里面连的是 mysql8019/redis507 这两个服务名
-    command: sh -c "./wait-for.sh redis507:6379 mysql8019:3306 -- ./inkwell -conf ./conf/config.docker.yaml"
+    # 用 -conf 指定容器内的配置文件, 里面连的是 mysql8019/redis507 这两个服务名。
+    # depends_on 的 service_healthy 已经保证依赖可用, 容器里再跑一次 wait-for.sh 做端口级二次确认,
+    # 同时它也方便脱离 compose 手动启动。
+    command: sh -c "./wait-for.sh mysql8019:3306 redis507:6379 -- ./inkwell -conf ./conf/config.docker.yaml"
+    environment:
+      TZ: "Asia/Shanghai"
     depends_on:
-      - mysql8019
-      - redis507
+      mysql8019:
+        condition: service_healthy
+      redis507:
+        condition: service_healthy
     ports:
       - "8081:8081"
+    volumes:
+      # 配置里写的是相对路径 ./log/inkwell.log, 而镜像的 WORKDIR 是 /, 所以日志在容器里的 /log/inkwell.log
+      - app_log:/log
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  app_log:

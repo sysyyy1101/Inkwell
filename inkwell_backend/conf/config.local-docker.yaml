@@ -1,0 +1,37 @@
+# 给"只用 Docker 起 MySQL/Redis, 后端在本机 go run"的场景用(README 第 7 节用法 B)。
+#
+#   docker compose up -d mysql8019 redis507
+#   go run . -conf ./conf/config.local-docker.yaml
+#
+# 和 config.yaml 的唯一区别: mysql/redis 的端口换成 compose 映射到本机的 23306/26379,
+# 密码换成 compose 里设置的 root1234。
+# 注意 host 必须是 127.0.0.1, 不能写成 mysql8019 —— 那是容器网络里的服务名, 本机解析不了。
+mode: "dev"
+port: 8081
+machine_id: 1
+jwt_secret: ""
+
+login_rate_limit:
+  rate: 2
+  burst: 10
+
+log:
+  level: "debug"
+  filename: "./log/inkwell.log"
+  max_size: 1000
+  max_age: 3600
+  max_backups: 5
+
+mysql:
+  host: 127.0.0.1
+  port: 23306
+  user: root
+  password: root1234
+  db: inkwell_pre
+  max_open_conns: 100
+  max_idle_conns: 20
+
+redis:
+  host: 127.0.0.1
+  port: 26379
+  db: 0

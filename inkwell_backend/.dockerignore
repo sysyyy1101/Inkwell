@@ -1,0 +1,15 @@
+# 这些文件不需要进构建上下文: 它们只会拖慢构建、让镜像层的缓存更容易失效。
+#
+# 注意: 不要在这里排除 docs/ —— routers/swagger.go 会 import inkwell_backend/docs
+# 这个包(docs/docs.go 里是 swag 生成的 Swagger 描述), 排除掉就编译不过了。
+.git
+.gitignore
+.air.conf
+log/
+tmp/
+*.log
+*.exe
+README.md
+docker-compose.yml
+Dockerfile
+.dockerignore
