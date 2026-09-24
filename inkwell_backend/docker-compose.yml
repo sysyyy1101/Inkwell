@@ -11,6 +11,9 @@
 # 只想要数据库、后端在本机 go run(日常开发更常用):
 #   docker compose up -d mysql8019 redis507
 #   go run . -conf ./conf/config.local-docker.yaml
+#
+# 不想本地构建, 只想拉 CI 发布好的镜像(前端也一起): 用仓库根目录的 docker-compose.yml,
+# 那里没有任何 build, 拿到一份文件就能跑。
 services:
   mysql8019:
     image: "mysql:8.0.19"
@@ -66,6 +69,10 @@ services:
     restart: unless-stopped
 
   inkwell_app:
+    # image 和 build 同时写着: 本地 docker compose up 会用源码构建(改了代码直接重新构建);
+    # docker compose pull && docker compose up -d 则直接用 GHCR 上发布好的镜像
+    # (CI 推的, 见 .github/workflows/docker-publish.yml)
+    image: "${INKWELL_BACKEND_IMAGE:-ghcr.io/sysyyy1101/inkwell-backend:latest}"
     build: .
     # 用 -conf 指定容器内的配置文件, 里面连的是 mysql8019/redis507 这两个服务名。
     # depends_on 的 service_healthy 已经保证依赖可用, 容器里再跑一次 wait-for.sh 做端口级二次确认,

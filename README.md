@@ -13,10 +13,16 @@
 | 文档 | swaggo/swag | 注解生成 Swagger, 访问 `/swagger/index.html` |
 | 前端 | Vue 3 + Vite + TypeScript | 单页应用, 只调用 `/api/v1` |
 
+> **只想跑起来看看?** 装了 Docker 就够(不用单独装 Go / MySQL / Redis / Node), 一条命令起整套:
+> `docker compose up -d`, 完整步骤和"镜像拉不到怎么办"见下面 **2.1**。
+
 ## 1. 目录结构
 
 ```text
 inkwell/
+├── docker-compose.yml         # 一键部署: 只拉已发布的镜像, 起 MySQL/Redis/后端/前端四个服务
+├── deploy/mysql/Dockerfile    # mysql:8.0.19 + 预置 init.sql(给上面那份 compose 用)
+├── .github/workflows/         # CI: 构建并推送三个镜像到 GHCR(多架构)
 ├── inkwell_backend/
 │   ├── main.go / routers/     # 入口(配置->日志->JWT 密钥->MySQL/Redis->雪花 ID->路由)与路由注册
 │   ├── cmd/seed/main.go       # 把 MySQL 的帖子灌进 Redis(初始化 / 丢数据后的重建工具)
@@ -32,7 +38,61 @@ inkwell/
 
 ## 2. 快速开始
 
-### 2.1 依赖
+两条路, 挑一条走就行:
+
+- **只想把项目跑起来看看**(不想装环境): 直接看 2.1, 全程只用 Docker。
+- **要改代码**: 按 2.2 -> 2.7 把依赖装到本机, 后端 `go run`、前端 `npm run dev`。
+
+### 2.1 一键运行(推荐先用这个)
+
+别人拿到这个项目之后, 从头到尾只需要装了 **Docker**(+ compose v2)这一件事:
+
+```bash
+docker compose up -d        # 拉镜像 + 起 4 个容器(第一次要联网; MySQL 首次启动会执行 init.sql 灌演示数据, 稍等一会)
+docker compose ps           # 等到 mysql8019 / redis507 / inkwell_app / inkwell_web 都是 healthy
+
+# 初始化榜单: 把 MySQL 里的帖子灌进 Redis。榜单/票数/评论数都在 Redis 里, 只起容器首页是空的
+docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml
+```
+
+跑完之后:
+
+| 入口 | 地址 |
+| --- | --- |
+| 前端页面 | `http://127.0.0.1:8080` |
+| 接口文档 | `http://127.0.0.1:8080/swagger/index.html` |
+| 后端接口 | `http://127.0.0.1:8081/api/v1/ping` |
+
+演示账号 `gopher_zhang` / `123456`(初始化脚本里的 60 个用户密码都是 `123456`)。
+
+连仓库都不用克隆 —— 需要的只有一份 `docker-compose.yml`(里面没有任何本地文件依赖):
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/sysyyy1101/Inkwell/main/docker-compose.yml
+docker compose up -d
+```
+
+日常用的几条命令:
+
+```bash
+docker compose logs -f inkwell_app   # 后端日志
+docker compose logs -f inkwell_web   # 前端(nginx 访问日志)
+docker compose down                  # 停掉, 数据留在数据卷里
+docker compose down -v               # 连数据卷一起删, 下次启动会重新灌一遍 init.sql
+```
+
+**镜像拉不到怎么办**(GHCR 上的包还没设成 Public、或者仓库还没跑过一次 CI)? 那就退回源码构建, 一样只要 Docker:
+
+```bash
+cd inkwell_backend
+docker compose up --build -d     # 本机从源码构建后端镜像(第一次要拉 golang/debian, 需要几分钟)
+docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml
+```
+
+端口、JWT 密钥、镜像标签都能用环境变量覆盖, 不用改文件:`INKWELL_JWT_SECRET`、`INKWELL_IMAGE_TAG`
+(写成同目录的 `.env` 或直接 `export`)。原理、双架构镜像和常见坑见第 7 节。
+
+### 2.2 依赖
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
@@ -40,9 +100,11 @@ inkwell/
 | MySQL | 8.0(5.7 也可) | 业务数据 |
 | Redis | 5.0+ | 榜单与实时计数 |
 | Node.js / npm | 18+ / 9+ | 只在前端需要 |
-| Docker | 可选 | 一键起 MySQL + Redis + 后端 |
+| Docker | 可选 | 装了它就不用装上面这几个, 直接走 2.1; 下面 2.3~2.7 是"本机装依赖直接跑"的走法 |
 
-### 2.2 初始化 MySQL
+> 如果 2.1 已经把整套跑起来了, 下面 2.3~2.7 可以跳过 —— 那是给改代码的人用的。
+
+### 2.3 初始化 MySQL
 
 ```bash
 mysql -h127.0.0.1 -P3306 -uroot -p < inkwell_backend/init.sql
@@ -51,7 +113,7 @@ mysql -h127.0.0.1 -P3306 -uroot -p < inkwell_backend/init.sql
 `init.sql` 会建库(`inkwell_pre`)、建表, 并灌入 60 个用户 / 12 个版块 / 120 篇帖子 / 300 条评论。
 **它会先 TRUNCATE 这四张表**(脚本开头有说明), 属于"推倒重来"的初始化脚本; 只想建表就把那四行注释掉。
 
-### 2.3 把数据灌进 Redis
+### 2.4 把数据灌进 Redis
 
 榜单、票数、评论数都在 Redis 里, 只跑 `init.sql` 的话首页是空的, 需要再执行一次:
 
@@ -68,7 +130,7 @@ go run ./cmd/seed -conf ./conf/config.yaml
 
 它同时是**榜单重建工具**: Redis 被清空之后重新跑一遍就能把榜单恢复出来(`-votes=false` 时票数从已有的投票记录恢复)。
 
-### 2.4 启动后端
+### 2.5 启动后端
 
 ```bash
 cd inkwell_backend
@@ -78,7 +140,7 @@ go run . -conf ./conf/config.yaml   # 也可以显式指定
 
 启动成功的标志: 日志里出现 `init logger success`、`init snowflake success` 以及 gin 打印的路由表。
 
-### 2.5 启动前端(可选)
+### 2.6 启动前端(可选)
 
 ```bash
 cd inkwell_frontend
@@ -88,7 +150,7 @@ npm run dev      # 打开 http://127.0.0.1:8080
 
 开发服务器会把 `/api/v1` 和 `/swagger` 代理到 `http://127.0.0.1:8081`, 所以不存在跨域问题。
 
-### 2.6 验证
+### 2.7 验证
 
 ```bash
 curl http://127.0.0.1:8081/api/v1/ping          # {"code":1000,"message":"success","data":"pong"}
@@ -117,7 +179,7 @@ login_rate_limit:     # 登录接口的令牌桶限流(整个进程只有一个�
 `jwt_secret` 给了一个占位值(**正式部署必须换成自己的随机密钥**)。
 
 `conf/config.local-docker.yaml` 是第三种组合: 只用 Docker 起 MySQL/Redis, 后端在本机 `go run` 时用,
-所以它的 host 是 `127.0.0.1`, 端口是 compose 映射到本机的 `23306`/`26379`(见第 7 节用法 B)。
+所以它的 host 是 `127.0.0.1`, 端口是 compose 映射到本机的 `23306`/`26379`(见第 7 节用法 C)。
 
 环境变量(优先级高于配置文件):
 
@@ -283,6 +345,53 @@ zap + lumberjack: JSON 编码、ISO8601 时间、级别大写、带短文件名�
 
 ## 7. Docker 部署
 
+最短路径(只想跑起来)在 **2.1** 已经写过一遍, 这一节是完整说明: 两套 compose 分别怎么用、镜像怎么发布、哪些参数能改。
+
+这里有两套 compose, 按"要不要改代码"来选:
+
+| 用哪套 | 文件 | 干嘛的 |
+| --- | --- | --- |
+| 一键跑起来 | 仓库根目录 `docker-compose.yml` | 只拉 GHCR 上已经发布的镜像, 不需要源码、不需要本地编译, MySQL + Redis + 后端 + 前端四个服务一把起 |
+| 本地开发 | `inkwell_backend/docker-compose.yml` | 后端从源码构建(改完代码 `docker compose up --build` 就行), 只起 MySQL / Redis / 后端 |
+
+### 7.1 用法 A: 拉镜像一键跑(推荐给"只想看看效果"的人)
+
+镜像由 GitHub Actions 在 push 到 `main` / 打 `v*` tag 时构建并推送到 GHCR, 每个镜像都有
+`linux/amd64` 和 `linux/arm64` 两个架构, 所以 x86 服务器和 Apple Silicon 都能直接用。
+根目录那份 `docker-compose.yml` 里没有任何 `build`, 也没有任何相对路径依赖(演示数据已经打进
+`inkwell-mysql` 镜像), 所以整份文件单独拿去也能跑:
+
+```bash
+docker compose up -d        # 拉镜像 + 起 4 个容器(第一次要联网)
+docker compose ps           # 等到 4 个都 healthy
+docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml   # 首次启动后灌一次 Redis 榜单
+```
+
+起好之后:
+
+| 入口 | 地址 |
+| --- | --- |
+| 前端页面 | `http://127.0.0.1:8080` |
+| 接口文档 | `http://127.0.0.1:8080/swagger/index.html`(前端容器反代到后端) |
+| 后端探活 | `http://127.0.0.1:8081/api/v1/ping` |
+
+演示账号 `gopher_zhang` / `123456`。常用命令和两个可覆盖的环境变量:
+
+```bash
+docker compose logs -f inkwell_app      # 后端日志
+docker compose logs -f inkwell_web      # 前端(nginx 访问日志)
+docker compose down                     # 停掉, 数据留在数据卷里
+docker compose down -v                  # 连数据卷一起删, 下次启动重新执行 init.sql
+
+INKWELL_IMAGE_TAG=v0.2.0 docker compose up -d    # 换成别的镜像标签(默认 latest)
+INKWELL_JWT_SECRET=换成你自己的随机串 docker compose up -d   # 覆盖后端 JWT 密钥
+```
+
+> GHCR 上的包默认是私有的: 第一次发布之后要进 GitHub -> Packages, 把 `inkwell-backend` /
+> `inkwell-frontend` / `inkwell-mysql` 三个包都改成 **Public**, 别人才能不加 token 直接 `docker compose up`。
+
+### 7.2 用法 B: 后端也从源码构建(改了代码就用这个)
+
 `inkwell_backend` 目录下有 `Dockerfile` + `docker-compose.yml` + `wait-for.sh`, 一条命令就能起 MySQL 8、Redis 5 和后端三个服务。
 下面所有命令都在 `inkwell_backend` 目录下执行。
 
@@ -294,16 +403,18 @@ zap + lumberjack: JSON 编码、ISO8601 时间、级别大写、带短文件名�
 
 端口刻意避开了本机默认的 3306/6379, 所以"本机自己装的一套 MySQL/Redis"和"容器里的这一套"可以同时存在。
 
-### 7.1 用法 A: 三个服务全在 Docker 里
-
 ```bash
-docker compose up --build -d     # 构建并启动(第一次要拉镜像, 需要网络)
+docker compose up --build -d     # 从源码构建并启动(第一次要拉 golang/debian 等基础镜像, 需要网络)
 docker compose ps                # 三个服务都 healthy 才算真的就绪
 docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml   # 把 MySQL 里的帖子灌进 Redis
+
+docker compose pull && docker compose up -d    # 也可以直接用 CI 发布好的后端镜像, 不本地编译
 ```
 
 灌完榜单后: `curl http://127.0.0.1:8081/api/v1/ping` 应该返回 pong, 浏览器打开
 `http://127.0.0.1:8081/swagger/index.html` 就是接口文档。
+
+前端不在这套 compose 里: 本地开发用 `npm run dev`(见第 9 节), 要连前端一起放进容器就用 7.1 那套。
 
 常用命令:
 
@@ -314,7 +425,7 @@ docker compose down                   # 停止并删除容器, 数据保留在�
 docker compose down -v                # 连数据卷一起删, 下次启动会重新执行 init.sql(推倒重来)
 ```
 
-### 7.2 用法 B: 只用 Docker 起数据库, 后端在本机 go run(推荐日常开发用)
+### 7.3 用法 C: 只用 Docker 起数据库, 后端在本机 go run(推荐日常开发用)
 
 ```bash
 docker compose up -d mysql8019 redis507
@@ -324,14 +435,22 @@ go run . -conf ./conf/config.local-docker.yaml
 `config.local-docker.yaml` 指向本机的 23306/26379; 而 `config.docker.yaml` 里的 host 是 `mysql8019`/`redis507`,
 那是容器网络里的服务名, 在本机解析不了, 两份配置不能混用。
 
-### 7.3 几个刻意的设计(面试可以讲)
+### 7.4 几个刻意的设计(面试可以讲)
 
-- **多阶段构建**: `golang:1.25-alpine` 只负责编译, 二进制被拷进 `debian:bullseye-slim`, 运行镜像里没有 Go 工具链和源码。
+- **多阶段构建**: `golang:1.25-alpine` 只负责编译, 二进制被拷进 `debian:bookworm-slim`, 运行镜像里没有 Go 工具链和源码;
+  前端同理(`node:22-alpine` 里跑 `vite build`, 产物拷进 `nginx:1.27-alpine`), 运行镜像里没有 node_modules 和 TypeScript。
 - **不写死 GOOS/GOARCH**: 交给 BuildKit 按目标平台构建; 写死成 linux/amd64 的话, 在 arm64 机器上会做出一个启动就报
-  `exec format error` 的镜像。
+  `exec format error` 的镜像。CI 里再用 `buildx` 一次构建 `linux/amd64` + `linux/arm64` 双架构。
 - **`init.sql` 放 `/docker-entrypoint-initdb.d/` 而不是 `--init-file`**: `--init-file` 是 mysqld 的启动参数, **每次启动都会执行**,
   而 `init.sql` 开头是四行 TRUNCATE —— 用它的话每次重启容器都会把数据清空重灌。放到 `docker-entrypoint-initdb.d` 下,
   官方入口脚本只会在数据目录为空(第一次启动)时执行一次。
+- **`image` 和 `build` 同时写在 `inkwell_app` 上**: 本地 `docker compose up --build` 用源码构建, `docker compose pull`
+  则直接拉 CI 发布好的镜像 —— 改代码和"只想用现成镜像"之间不用来回切换配置文件。
+- **镜像发布与架构**: `.github/workflows/docker-publish.yml` 在 push 到 `main` / 打 tag 时把三个镜像推到 GHCR,
+  别人只要一份 `docker-compose.yml` 就能跑起来, 不需要装 Go/Node 工具链, 也不用下载源码。
+- **`wait-for.sh` 的行尾**: Windows 上 `core.autocrlf=true` 会把脚本 checkout 成 CRLF, 而 `#!/bin/bash\r` 这种 shebang
+  在 Linux 里会直接报 `bad interpreter`。仓库根目录的 `.gitattributes` 钉了 `*.sh` 用 LF, 构建时再 `sed` 清一遍 `\r`,
+  两条防线保证"在什么系统上构建都不会踩这个坑"。
 - **`MYSQL_ROOT_HOST=%`**: 官方镜像默认只建 `root@localhost`(只能从容器内部连), 后端跑在另一个容器里,
   不加这行会报 `Access denied for user 'root'@'172.x.x.x'`。
 - **必须保留 `--default-authentication-plugin=mysql_native_password`**: MySQL 8 默认的 `caching_sha2_password` 和项目里的
@@ -341,13 +460,18 @@ go run . -conf ./conf/config.local-docker.yaml
 - **数据卷 `mysql_data` / `redis_data` / `app_log`**: `docker compose down` 不会丢数据, 只有 `down -v` 才会清空。
 - **镜像里同时打包了 `./seed`**: 需要重建榜单时执行 `docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml`。
 
-### 7.4 已知限制
+### 7.5 已知限制
 
-- 第一次 `docker compose up --build` 要联网拉镜像(golang、debian、mysql、redis, 1GB 以上), 国内建议先给 Docker 配镜像加速器。
-- 前端不在 compose 里: 需要自己 `npm run build`, 再用 nginx 托管 `dist/` 并把 `/api/v1`、`/swagger` 反代到后端。
+- 第一次 `docker compose up -d`(拉四个镜像)或 `docker compose up --build -d`(还要额外拉 golang/node 等构建镜像)
+  都要联网, 国内建议先给 Docker 配镜像加速器。
+- 放在 GHCR 上的包默认是私有的, 第一次发布之后要手动把 `inkwell-backend`/`inkwell-frontend`/`inkwell-mysql` 改成 Public,
+  否则别人拉不动(用 `docker login ghcr.io` 也能拉, 但就不算"一键"了)。
+- `inkwell_backend/docker-compose.yml` 里没有前端: 本地开发用 `npm run dev`(见第 9 节), 要连前端一起放进容器就用根目录那份 compose。
 - `conf/config.docker.yaml` 里的 `jwt_secret` 是占位值, 正式部署必须换成自己的随机密钥(或用环境变量 `INKWELL_JWT_SECRET` 覆盖)。
 - compose 里的 8081 会和你本机 `go run .` 抢端口, 两个不要同时启动。
 - 容器版 MySQL 的账号密码是写死在 compose 里的(只为本地演示), 生产应该用密钥管理 + 非 root 账号。
+- `init.sql` 只在该数据卷第一次创建时执行: 改了它(或者想要一份干净数据)得 `docker compose down -v` 再来一次;
+  用根目录那套的话, 演示数据在 `inkwell-mysql` 镜像里, 改完 `init.sql` 还要等 CI 重新构建镜像。
 
 ## 8. 测试
 
@@ -389,13 +513,25 @@ npm run build     # vue-tsc 类型检查 + 打包到 dist/
 npm run preview   # 预览 dist/(同样带代理)
 ```
 
+生产部署不用自己装 nginx: `inkwell_frontend/Dockerfile` 会把 `dist/` 构建出来交给 nginx,
+容器里同时把 `/api/v1`、`/swagger` 反代到后端(配置见 `inkwell_frontend/nginx.conf`),
+所以直接走第 7 节用法 A 就能连前端一起跑起来。
+
 登录态放在 `localStorage` 的 `inkwell.auth`, 由 `src/api/session.ts` 统一读写(axios 拦截器也要用, 所以没放进 pinia);
 响应拦截器遇到 1006/1008 会自动刷新 token 并重放请求; 投票方向记在 `inkwell.votes`(后端没有"查我投过什么"的接口),
 但**票数一律用接口返回的 `vote_num`**, 本地记录只用来决定点下去该发哪个方向。
 
 ## 10. 常见问题
 
-**首页没有帖子, 但 `/post2` 有**: 榜单在 Redis 里, 还没跑 `go run ./cmd/seed`, 跑一次就有了。
+**首页没有帖子, 但 `/post2` 有**: 榜单在 Redis 里, 还没跑 seed, 跑一次就有了 —— 本机 `go run ./cmd/seed -conf ./conf/config.yaml`,
+容器里 `docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml`。
+
+**`docker compose up` 报 `pull access denied` / `unauthorized`**: 镜像在 GHCR 上, 包默认是私有的。要么让仓库主把
+`inkwell-backend`/`inkwell-frontend`/`inkwell-mysql` 三个包改成 Public, 要么 `docker login ghcr.io` 之后再拉,
+要么干脆退回源码构建:`cd inkwell_backend && docker compose up --build -d`(见 2.1)。
+
+**`docker compose up` 报 `port is already allocated`**: 8080/8081 端口被占了(本机也可能有别的服务在用),
+改根目录 compose 里 `inkwell_web` 的 `8080:80`、`inkwell_app` 的 `8081:8081` 冒号前面的数字即可。
 
 **投票报"帖子不存在或已过期"**: 只有一种情况 —— 帖子在 MySQL 和 Redis 里都不存在, 或者发帖超过 7 天(设计如此)。
 帖子在 Redis 里丢了(不管只是 Hash 丢了, 还是整个 Redis 被 flush)会自动回源 MySQL 重建: 投票和评论都会触发重建,
@@ -420,4 +556,4 @@ npm run preview   # 预览 dist/(同样带代理)
 5. **没有"查询我对某帖的投票"接口**, 前端只能把方向记在浏览器本地; 换设备后会收到"已经投过票了", 前端据此同步状态。
 6. **refresh token 不可撤销**: 没有黑名单/一次性机制, 登出只能清本地; 另外 `/refresh_token` 没有校验 refresh token 与 access token 是否属于同一个用户, 建议后续绑定 `sub` 与 `user_id`。
 7. **Redis 里的榜单 key 没有 TTL**(只有投票记录 7 天过期), 会随帖子数一直增长; 生产环境建议按热度裁剪或分库, 并留意 `maxmemory-policy`。
-8. **前端没有自动化测试与 lint**(只有 `vue-tsc` 类型检查), 也没有 CI; 多实例部署需要自己保证 `machine_id` 不同, 帖子 `status` 字段预留但没有做下架与可见性控制。
+8. **前端没有自动化测试与 lint**(只有 `vue-tsc` 类型检查), CI 也只负责构建推送镜像; 多实例部署需要自己保证 `machine_id` 不同, 帖子 `status` 字段预留但没有做下架与可见性控制。

@@ -1,0 +1,112 @@
+# ============================================================================
+# Inkwell 一键部署: 只拉镜像, 不需要源码、不需要本地构建
+# ----------------------------------------------------------------------------
+# 常用命令(都在这个文件所在目录执行):
+#   docker compose up -d        拉镜像 + 起 4 个容器(第一次要联网)
+#   docker compose ps           等到 4 个都是 healthy 才算真的就绪
+#   docker compose exec inkwell_app ./seed -conf ./conf/config.docker.yaml
+#                               首次启动后跑一次: 把 MySQL 里的帖子灌进 Redis 榜单
+#   docker compose logs -f inkwell_app     后端日志
+#   docker compose logs -f inkwell_web     前端(nginx 访问日志)
+#   docker compose down                    停止并删除容器(数据留在数据卷里)
+#   docker compose down -v                 连数据卷一起删, 下次启动会重新执行 init.sql
+#
+# 起好之后:
+#   前端页面      http://127.0.0.1:8080
+#   接口文档      http://127.0.0.1:8080/swagger/index.html
+#   后端探活      http://127.0.0.1:8081/api/v1/ping
+#
+# 两个可选的环境变量(写进同目录的 .env, 或者直接在命令前面 export):
+#   INKWELL_IMAGE_TAG=v0.2.0     换成别的镜像标签(默认 latest)
+#   INKWELL_JWT_SECRET=xxxx      覆盖后端 JWT 密钥(默认用镜像里的占位值, 对外部署务必设置)
+#
+# 镜像从哪来: .github/workflows/docker-publish.yml 在 push 到 main / 打 v* tag 时构建
+# 并推送到 GHCR(linux/amd64 + linux/arm64 双架构)。注意 GHCR 上的包默认是私有的,
+# 第一次发布之后要进 GitHub -> Packages, 把 inkwell-backend / inkwell-frontend /
+# inkwell-mysql 三个包都改成 Public, 别人才能不加 token 直接 docker compose up。
+#
+# 这个文件刻意不依赖任何本地文件(演示数据已经打进 inkwell-mysql 镜像), 所以单独把
+# 这一份 yml 发给别人也能跑起来; 想改代码后本地构建运行, 用 inkwell_backend/docker-compose.yml。
+# ============================================================================
+services:
+  mysql8019:
+    # 这个镜像就是 mysql:8.0.19 + 预置了 inkwell_backend/init.sql(含建库建表和一套演示数据),
+    # 必需的启动参数(--default-authentication-plugin 等)已经写进镜像的 CMD, 所以这里不用再写 command
+    # 构建方式见 deploy/mysql/Dockerfile
+    image: "ghcr.io/sysyyy1101/inkwell-mysql:${INKWELL_IMAGE_TAG:-latest}"
+    environment:
+      MYSQL_ROOT_PASSWORD: "root1234"
+      # 必须加: 官方镜像默认只建 root@localhost(只能从容器内部连),
+      # 后端跑在另一个容器里, 不加这行会报 "Access denied for user 'root'@'172.x.x.x'"
+      MYSQL_ROOT_HOST: "%"
+      # 数据库名必须和 conf/config.docker.yaml 里的 mysql.db 一致
+      MYSQL_DATABASE: "inkwell_pre"
+      TZ: "Asia/Shanghai"
+    volumes:
+      # 数据卷: 不带这个的话, docker compose down 之后数据就没了
+      - mysql_data:/var/lib/mysql
+    # 默认不把 3306 暴露到宿主机(少开一个对外端口); 要用本机 mysql 客户端连它就打开这两行
+    # ports:
+    #   - "23306:3306"
+    healthcheck:
+      # 走 socket 连(不写 -h), 匹配的是 root@localhost, 一定存在
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot1234", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  redis507:
+    image: "redis:5.0.7"
+    # 开 AOF: 投票记录(7 天 TTL)不会因为容器重启就丢
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    # ports:
+    #   - "26379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  inkwell_app:
+    image: "ghcr.io/sysyyy1101/inkwell-backend:${INKWELL_IMAGE_TAG:-latest}"
+    # 用 -conf 指定容器内的配置文件, 里面连的是 mysql8019/redis507 这两个服务名。
+    # depends_on 的 service_healthy 已经保证依赖可用, 容器里再跑一次 wait-for.sh 做端口级二次确认。
+    command: sh -c "./wait-for.sh mysql8019:3306 redis507:6379 -- ./inkwell -conf ./conf/config.docker.yaml"
+    environment:
+      TZ: "Asia/Shanghai"
+      # 留空时不会覆盖配置文件里的值(settings 里会忽略空串)
+      INKWELL_JWT_SECRET: "${INKWELL_JWT_SECRET:-}"
+    depends_on:
+      mysql8019:
+        condition: service_healthy
+      redis507:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    volumes:
+      # 配置里写的是相对路径 ./log/inkwell.log, 而镜像的 WORKDIR 是 /, 所以日志在容器里的 /log/inkwell.log
+      - app_log:/log
+    restart: unless-stopped
+
+  inkwell_web:
+    image: "ghcr.io/sysyyy1101/inkwell-frontend:${INKWELL_IMAGE_TAG:-latest}"
+    # 前端容器里是 nginx: 发 dist/ 里的静态文件, 并把 /api/v1、/swagger 反代到
+    # inkwell_app:8081 —— 浏览器只访问 8080 一个端口, 因此不存在跨域问题。
+    # 配置见 inkwell_frontend/nginx.conf
+    depends_on:
+      inkwell_app:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  app_log:

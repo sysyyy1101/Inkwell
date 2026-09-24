@@ -1,4 +1,4 @@
-# 给"只用 Docker 起 MySQL/Redis, 后端在本机 go run"的场景用(README 第 7 节用法 B)。
+# 给"只用 Docker 起 MySQL/Redis, 后端在本机 go run"的场景用(README 第 7 节用法 C)。
 #
 #   docker compose up -d mysql8019 redis507
 #   go run . -conf ./conf/config.local-docker.yaml

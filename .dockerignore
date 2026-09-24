@@ -1,0 +1,45 @@
+# 只有 deploy/mysql/Dockerfile 会用"仓库根目录"当构建上下文(把 init.sql 拷进镜像),
+# 另外两个镜像的上下文分别是 inkwell_backend/ 和 inkwell_frontend/, 各有自己的 .dockerignore。
+# 这里只管把根目录里不需要的东西挡在上下文外面: 传得少一点, 构建快一点。
+.git
+.github
+.gitignore
+.dockerignore
+.idea
+.vscode
+.DS_Store
+
+# 前端源码(以及它可能留下的 node_modules/dist)这个镜像里用不到
+inkwell_frontend
+**/node_modules
+**/dist
+**/*.log
+
+# 后端只需要 init.sql, 其余都不用进上下文
+inkwell_backend/Dockerfile
+inkwell_backend/.dockerignore
+inkwell_backend/docker-compose.yml
+inkwell_backend/wait-for.sh
+inkwell_backend/.air.conf
+inkwell_backend/cmd
+inkwell_backend/conf
+inkwell_backend/controller
+inkwell_backend/dao
+inkwell_backend/docs
+inkwell_backend/log
+inkwell_backend/logger
+inkwell_backend/logic
+inkwell_backend/models
+inkwell_backend/pkg
+inkwell_backend/routers
+inkwell_backend/settings
+inkwell_backend/tmp
+inkwell_backend/main.go
+inkwell_backend/go.mod
+inkwell_backend/go.sum
+inkwell_backend/.gitignore
+inkwell_backend/README.md
+
+README.md
+Dockerfile
+docker-compose.yml

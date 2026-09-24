@@ -1,0 +1,101 @@
+# 构建并推送三个镜像到 GHCR(镜像名全小写, 见下面 steps.vars):
+#   ghcr.io/<owner>/inkwell-backend   Go 后端(inkwell_backend/Dockerfile, 多阶段构建)
+#   ghcr.io/<owner>/inkwell-frontend  Vue 打包 + nginx(inkwell_frontend/Dockerfile)
+#   ghcr.io/<owner>/inkwell-mysql     mysql:8.0.19 + 演示数据(deploy/mysql/Dockerfile)
+#
+# 触发时机: push 到 main、打 v* tag、或到 Actions 页面手动点一次。
+# 每个镜像都构建 linux/amd64 + linux/arm64 两个架构, 所以 x86 服务器和 Apple Silicon
+# 的机器都能直接 docker compose up, 不会出现 exec format error。
+#
+# 推完之后要手动做一步: 进 GitHub -> Packages, 把这三个包改成 Public(默认私有),
+# 否则别人 docker compose up 会因为没有 token 而拉不动。
+# 拉取方式见仓库根目录的 docker-compose.yml 与 README 第 7 节。
+
+name: docker-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  # 允许在 Actions 页面手动触发一次
+  workflow_dispatch:
+
+# 只读源码 + 允许把镜像推到本仓库的 Packages
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      # 一个镜像失败不要影响另外两个(方便看出是哪一个挂了)
+      fail-fast: false
+      matrix:
+        include:
+          - image: inkwell-backend
+            context: ./inkwell_backend
+            file: ./inkwell_backend/Dockerfile
+          - image: inkwell-frontend
+            context: ./inkwell_frontend
+            file: ./inkwell_frontend/Dockerfile
+          - image: inkwell-mysql
+            # 这个镜像要把 init.sql 拷进去, 所以构建上下文是仓库根目录
+            context: .
+            file: ./deploy/mysql/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR 要求镜像名全小写, 而 GitHub 账号名是保留大小写的, 这里统一转成小写
+      - name: 取出全小写的镜像前缀
+        id: vars
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      # arm64 的镜像要在 amd64 的 runner 上交叉构建, 需要 QEMU
+      - name: 安装 QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成标签与元信息
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.vars.outputs.owner }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # 每次都去拉最新的基础镜像, 免得一直用 runner 上缓存的旧 alpine/debian
+          pull: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
